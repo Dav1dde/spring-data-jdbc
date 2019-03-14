@@ -460,6 +460,16 @@ public interface SelectBuilder {
 		 * @see SQL#table(String)
 		 */
 		SelectOn join(Table table);
+
+		/**
+		 * Declare a {@code LEFT OUTER JOIN} {@link Table}.
+		 *
+		 * @param table name of the table, must not be {@literal null}.
+		 * @return {@code this} builder.
+		 * @see Join
+		 * @see SQL#table(String)
+		 */
+		SelectOn leftOuterJoin(Table table);
 	}
 
 	/**

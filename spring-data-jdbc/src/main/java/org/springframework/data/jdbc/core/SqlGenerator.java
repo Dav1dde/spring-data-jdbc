@@ -15,8 +15,11 @@
  */
 package org.springframework.data.jdbc.core;
 
+import lombok.Value;
+
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,10 +36,20 @@ import org.springframework.data.mapping.PropertyHandler;
 import org.springframework.data.relational.core.mapping.RelationalMappingContext;
 import org.springframework.data.relational.core.mapping.RelationalPersistentEntity;
 import org.springframework.data.relational.core.mapping.RelationalPersistentProperty;
+import org.springframework.data.relational.core.sql.Aliased;
+import org.springframework.data.relational.core.sql.Column;
+import org.springframework.data.relational.core.sql.Expression;
+import org.springframework.data.relational.core.sql.SQL;
+import org.springframework.data.relational.core.sql.Select;
+import org.springframework.data.relational.core.sql.SelectBuilder;
+import org.springframework.data.relational.core.sql.StatementBuilder;
+import org.springframework.data.relational.core.sql.Table;
+import org.springframework.data.relational.core.sql.render.SqlRenderer;
 import org.springframework.data.util.Lazy;
 import org.springframework.data.util.StreamUtils;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 /**
  * Generates SQL statements to be used by {@link SimpleJdbcRepository}
@@ -151,7 +164,7 @@ class SqlGenerator {
 				"If the SQL statement should be ordered a keyColumn to order by must be provided.");
 
 		String baseSelect = (keyColumn != null) //
-				? createSelectBuilder().column(cb -> cb.tableAlias(entity.getTableName()).column(keyColumn).as(keyColumn))
+				? createSelectBuilderOld().column(cb -> cb.tableAlias(entity.getTableName()).column(keyColumn).as(keyColumn))
 						.build()
 				: getFindAll();
 
@@ -190,14 +203,14 @@ class SqlGenerator {
 
 	private String createFindOneSelectSql() {
 
-		return createSelectBuilder() //
+		return createSelectBuilderOld() //
 				.where(wb -> wb.tableAlias(entity.getTableName()).column(entity.getIdColumn()).eq().variable("id")) //
 				.build();
 	}
 
-	private SelectBuilder createSelectBuilder() {
+	private SelectBuilderOld createSelectBuilderOld() {
 
-		SelectBuilder builder = new SelectBuilder(entity.getTableName());
+		SelectBuilderOld builder = new SelectBuilderOld(entity.getTableName());
 		addColumnsForSimpleProperties(entity, "", "", entity, builder);
 		addColumnsForEmbeddedProperties(entity, "", "", entity, builder);
 		addColumnsAndJoinsForOneToOneReferences(entity, "", "", entity, builder);
@@ -206,14 +219,14 @@ class SqlGenerator {
 	}
 
 	/**
-	 * Adds the columns to the provided {@link SelectBuilder} representing simple properties, including those from
+	 * Adds the columns to the provided {@link SelectBuilderOld} representing simple properties, including those from
 	 * one-to-one relationships.
 	 *
 	 * @param rootEntity the root entity for which to add the columns.
-	 * @param builder The {@link SelectBuilder} to be modified.
+	 * @param builder The {@link SelectBuilderOld} to be modified.
 	 */
 	private void addColumnsAndJoinsForOneToOneReferences(RelationalPersistentEntity<?> entity, String prefix,
-			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilder builder) {
+			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilderOld builder) {
 
 		for (RelationalPersistentProperty property : entity) {
 			if (!property.isEntity() //
@@ -263,7 +276,7 @@ class SqlGenerator {
 	}
 
 	private void addColumnsForEmbeddedProperties(RelationalPersistentEntity<?> currentEntity, String prefix,
-			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilder builder) {
+			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilderOld builder) {
 		for (RelationalPersistentProperty property : currentEntity) {
 			if (!property.isEmbedded()) {
 				continue;
@@ -280,7 +293,7 @@ class SqlGenerator {
 	}
 
 	private void addColumnsForSimpleProperties(RelationalPersistentEntity<?> currentEntity, String prefix,
-			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilder builder) {
+			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilderOld builder) {
 
 		for (RelationalPersistentProperty property : currentEntity) {
 
@@ -314,12 +327,185 @@ class SqlGenerator {
 	}
 
 	private String createFindAllSql() {
-		return createSelectBuilder().build();
+
+		Table table = SQL.table(entity.getTableName());
+
+		List<Expression> columnExpressions = new ArrayList<>();
+		Set<Join> joinTables = new HashSet<>();
+		for (PersistentPropertyPath<RelationalPersistentProperty> path : context
+				.findPersistentPropertyPaths(entity.getType(), p -> true)) {
+
+			System.out.println(path);
+
+			// add a join if necessary
+			Join join = getJoin(path);
+			if (join != null) {
+				joinTables.add(join);
+			}
+			columnExpressions.addAll(getColumn(path));
+		}
+
+		SelectBuilder.SelectAndFrom selectBuilder = StatementBuilder.select(columnExpressions);
+
+		SelectBuilder.SelectJoin baseSelect = selectBuilder.from(table);
+
+		// TODO reusing the Join class would be nice
+		for (Join join : joinTables) {
+			baseSelect = baseSelect.leftOuterJoin(join.joinTable).on(join.joinColumn).equals(join.parentId);
+		}
+
+		Select select = baseSelect.build();
+
+		return SqlRenderer.create().render(select);
+	}
+
+	List<Column> getColumn(PersistentPropertyPath<RelationalPersistentProperty> path) {
+
+		RelationalPersistentProperty leafProperty = path.getRequiredLeafProperty();
+
+		if (leafProperty.isEmbedded() || containsCollectionOrMap(path)) {
+			return Collections.emptyList();
+		}
+
+		Table currentTable;
+		String columnName;
+		if (leafProperty.isEntity()) {
+			RelationalPersistentEntity<?> entityType = context.getRequiredPersistentEntity(leafProperty.getActualType());
+			if (entityType.hasIdProperty()) {
+				return Collections.emptyList();
+			}
+
+			currentTable = SQL.table(entityType.getTableName()).as(getAliasPrefix(path));
+			columnName = leafProperty.getReverseColumnName();
+
+		} else {
+
+			Table table = SQL.table(entity.getTableName());
+			// determine the table the property belongs to
+			currentTable = getOwningTable(path, table);
+			columnName = getEmbeddedPrefix(path, "") + leafProperty.getColumnName();
+
+		}
+
+		String prefix = getAlias(currentTable);
+		if (StringUtils.hasText(prefix)) {
+			prefix = prefix + "_";
+		}
+		return Collections.singletonList(currentTable.column(columnName).as(prefix + columnName));
+	}
+
+	private String getAlias(Table currentTable) {
+		if (currentTable instanceof Aliased) {
+			return ((Aliased) currentTable).getAlias();
+		}
+		return "";
+	}
+
+	private String getEmbeddedPrefix(PersistentPropertyPath<RelationalPersistentProperty> path, String prefix) {
+
+		if (path.getLength() <= 1) {
+			return prefix;
+		}
+		PersistentPropertyPath<RelationalPersistentProperty> parentPath = path.getParentPath();
+		RelationalPersistentProperty parentLeaf = parentPath.getRequiredLeafProperty();
+		if (!parentLeaf.isEmbedded()) {
+			return prefix;
+		}
+		String embeddedPrefix = parentLeaf.getEmbeddedPrefix();
+		return getEmbeddedPrefix(parentPath, embeddedPrefix + prefix);
+	}
+
+	private Table getOwningTable(PersistentPropertyPath<RelationalPersistentProperty> path, Table table) {
+
+		if (path.getLength() > 1) {
+
+			RelationalPersistentProperty leafProperty = path.getRequiredLeafProperty();
+			PersistentPropertyPath<RelationalPersistentProperty> parentPath = path.getParentPath();
+			if (parentPath.getRequiredLeafProperty().isEmbedded()) {
+				return getOwningTable(parentPath, table);
+			}
+			return SQL.table(leafProperty.getOwner().getTableName()).as(getAliasPrefix(parentPath));
+		} else {
+			return table;
+		}
+	}
+
+	@Nullable
+	Join getJoin(PersistentPropertyPath<RelationalPersistentProperty> path) {
+
+		RelationalPersistentProperty leafProperty = path.getRequiredLeafProperty();
+
+		if (!leafProperty.isEntity() || leafProperty.isEmbedded() || containsCollectionOrMap(path)) {
+			return null;
+		}
+
+		Table currentTable = SQL.table(context.getRequiredPersistentEntity(leafProperty.getActualType()).getTableName())
+				.as(getAliasPrefix(path));
+
+		PersistentPropertyPath<RelationalPersistentProperty> idDefiningParentPath = getIdDefiningParentPath(path);
+		RelationalPersistentEntity<?> owner = getLeafEntity(idDefiningParentPath, entity);
+		Table parentTable = SQL.table(owner.getTableName());
+
+		return new Join( //
+				currentTable, //
+				currentTable.column(path.getRequiredLeafProperty().getReverseColumnName()), //
+				parentTable.column(owner.getRequiredIdProperty().getColumnName()) //
+		);
+	}
+
+	private boolean containsCollectionOrMap(PersistentPropertyPath<RelationalPersistentProperty> path) {
+
+		if (path.isEmpty()) {
+			return false;
+		}
+
+		return  path.getRequiredLeafProperty().isCollectionLike() //
+				|| path.getRequiredLeafProperty().isQualified() //
+				|| containsCollectionOrMap(path.getParentPath());
+	}
+
+	private RelationalPersistentEntity<?> getLeafEntity(PersistentPropertyPath<RelationalPersistentProperty> path,
+			RelationalPersistentEntity<?> root) {
+		if (path.getLength() == 0) {
+			return root;
+		}
+		return context.getRequiredPersistentEntity(path.getRequiredLeafProperty().getActualType());
+	}
+
+	private PersistentPropertyPath<RelationalPersistentProperty> getIdDefiningParentPath(
+			PersistentPropertyPath<RelationalPersistentProperty> path) {
+
+		PersistentPropertyPath<RelationalPersistentProperty> parent = path.getParentPath();
+		if (parent.getLength() == 0) {
+			return parent;
+		}
+		if (parent.getRequiredLeafProperty().isEmbedded()) {
+			return getIdDefiningParentPath(parent);
+		}
+		return parent;
+	}
+
+	private String getAliasPrefix(PersistentPropertyPath<RelationalPersistentProperty> path) {
+
+		if (path.getLength() == 0) {
+			return "";
+		}
+
+		PersistentPropertyPath<RelationalPersistentProperty> parentPath = path.getParentPath();
+
+		RelationalPersistentProperty leaf = path.getRequiredLeafProperty();
+
+		String parentAlias = getAliasPrefix(parentPath);
+		if (StringUtils.hasText(parentAlias) && !parentPath.getRequiredLeafProperty().isEmbedded()) {
+			parentAlias += "_";
+		}
+
+		return parentAlias + (leaf.isEmbedded() ? leaf.getEmbeddedPrefix() : leaf.getName());
 	}
 
 	private String createFindAllInListSql() {
 
-		return createSelectBuilder() //
+		return createSelectBuilderOld() //
 				.where(wb -> wb.tableAlias(entity.getTableName()).column(entity.getIdColumn()).in().variable("ids")) //
 				.build();
 	}
@@ -343,8 +529,7 @@ class SqlGenerator {
 		String tableColumns = String.join(", ", columnNamesForInsert);
 
 		String parameterNames = columnNamesForInsert.stream()//
-				.map(this::columnNameToParameterName)
-				.map(n -> String.format(":%s", n))//
+				.map(this::columnNameToParameterName).map(n -> String.format(":%s", n))//
 				.collect(Collectors.joining(", "));
 
 		return String.format(insertTemplate, entity.getTableName(), tableColumns, parameterNames);
@@ -458,7 +643,15 @@ class SqlGenerator {
 		);
 	}
 
-	private String columnNameToParameterName(String columnName){
+	private String columnNameToParameterName(String columnName) {
 		return parameterPattern.matcher(columnName).replaceAll("");
 	}
+
+	@Value
+	class Join {
+		Table joinTable;
+		Column joinColumn;
+		Column parentId;
+	}
+
 }

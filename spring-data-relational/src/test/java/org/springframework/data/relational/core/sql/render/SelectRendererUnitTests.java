@@ -107,6 +107,21 @@ public class SelectRendererUnitTests {
 				+ "JOIN department ON employee.department_id = department.id");
 	}
 
+	@Test // DATAJDBC-340
+	public void shouldRenderOuterJoin() {
+
+		Table employee = SQL.table("employee");
+		Table department = SQL.table("department");
+
+		Select select = Select.builder().select(employee.column("id"), department.column("name")) //
+				.from(employee) //
+				.leftOuterJoin(department).on(employee.column("department_id")).equals(department.column("id")) //
+				.build();
+
+		assertThat(SqlRenderer.toString(select)).isEqualTo("SELECT employee.id, department.name FROM employee "
+				+ "LEFT OUTER JOIN department ON employee.department_id = department.id");
+	}
+
 	@Test // DATAJDBC-309
 	public void shouldRenderSimpleJoinWithAnd() {
 

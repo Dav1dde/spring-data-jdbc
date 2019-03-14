@@ -28,7 +28,8 @@ import java.util.stream.Collectors;
  *
  * @author Jens Schauder
  */
-class SelectBuilder {
+@Deprecated
+class SelectBuilderOld {
 
 	private final List<Column> columns = new ArrayList<>();
 	private final String tableName;
@@ -36,11 +37,11 @@ class SelectBuilder {
 	private final List<WhereCondition> conditions = new ArrayList<>();
 
 	/**
-	 * Creates a {@link SelectBuilder} using the given table name.
+	 * Creates a {@link SelectBuilderOld} using the given table name.
 	 * 
 	 * @param tableName the table name. Must not be {@code null}.
 	 */
-	SelectBuilder(String tableName) {
+	SelectBuilderOld(String tableName) {
 
 		this.tableName = tableName;
 	}
@@ -52,7 +53,7 @@ class SelectBuilder {
 	 *          specify details like alias and the source table. Must not be {@code null}.
 	 * @return {@code this}.
 	 */
-	SelectBuilder column(Function<Column.ColumnBuilder, Column.ColumnBuilder> columnSpec) {
+	SelectBuilderOld column(Function<Column.ColumnBuilder, Column.ColumnBuilder> columnSpec) {
 
 		columns.add(columnSpec.apply(Column.builder()).build());
 		return this;
@@ -65,7 +66,7 @@ class SelectBuilder {
 	 *          {@link WhereConditionBuilder}. Must not be {@code null}.
 	 * @return {@code this}.
 	 */
-	SelectBuilder where(Function<WhereConditionBuilder, WhereConditionBuilder> whereSpec) {
+	SelectBuilderOld where(Function<WhereConditionBuilder, WhereConditionBuilder> whereSpec) {
 
 		conditions.add(whereSpec.apply(new WhereConditionBuilder()).build());
 		return this;
@@ -78,7 +79,7 @@ class SelectBuilder {
 	 *          {@link Join.JoinBuilder}. Must not be {@code null}.
 	 * @return {@code this}.
 	 */
-	SelectBuilder join(Function<Join.JoinBuilder, Join.JoinBuilder> joinSpec) {
+	SelectBuilderOld join(Function<Join.JoinBuilder, Join.JoinBuilder> joinSpec) {
 
 		joins.add(joinSpec.apply(Join.builder()).build());
 		return this;

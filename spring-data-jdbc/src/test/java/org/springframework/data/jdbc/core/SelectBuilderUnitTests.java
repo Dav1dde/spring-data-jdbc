@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.*;
 import org.junit.Test;
 
 /**
- * Unit tests for the {@link SelectBuilder}.
+ * Unit tests for the {@link SelectBuilderOld}.
  *
  * @author Jens Schauder
  */
@@ -29,7 +29,7 @@ public class SelectBuilderUnitTests {
 	@Test // DATAJDBC-112
 	public void simplestSelect() {
 
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.tableAlias("mytable").column("mycolumn").as("myalias")) //
 				.build();
 
@@ -39,7 +39,7 @@ public class SelectBuilderUnitTests {
 	@Test // DATAJDBC-112
 	public void columnWithoutTableAlias() {
 
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.column("mycolumn").as("myalias")) //
 				.build();
 
@@ -49,7 +49,7 @@ public class SelectBuilderUnitTests {
 	@Test // DATAJDBC-112
 	public void whereClause() {
 
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.tableAlias("mytable").column("mycolumn").as("myalias")) //
 				.where(cb -> cb.tableAlias("mytable").column("mycolumn").eq().variable("var")).build();
 
@@ -59,7 +59,7 @@ public class SelectBuilderUnitTests {
 	@Test // DATAJDBC-112
 	public void multipleColumnsSelect() {
 
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.tableAlias("mytable").column("one").as("oneAlias")) //
 				.column(cb -> cb.tableAlias("mytable").column("two").as("twoAlias")) //
 				.build();
@@ -69,7 +69,7 @@ public class SelectBuilderUnitTests {
 
 	@Test // DATAJDBC-112
 	public void join() {
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.tableAlias("mytable").column("mycolumn").as("myalias")) //
 				.join(jb -> jb.table("other").as("o").where("oid").eq().column("mytable", "id")).build();
 
@@ -78,7 +78,7 @@ public class SelectBuilderUnitTests {
 
 	@Test // DATAJDBC-112
 	public void outerJoin() {
-		String sql = new SelectBuilder("mytable") //
+		String sql = new SelectBuilderOld("mytable") //
 				.column(cb -> cb.tableAlias("mytable").column("mycolumn").as("myalias")) //
 				.join(jb -> jb.rightOuter().table("other").as("o").where("oid").eq().column("mytable", "id")).build();
 

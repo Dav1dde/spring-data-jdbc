@@ -249,7 +249,9 @@ public class DefaultDataAccessStrategy implements DataAccessStrategy {
 	@SuppressWarnings("unchecked")
 	@Override
 	public <T> Iterable<T> findAll(Class<T> domainType) {
-		return operations.query(sql(domainType).getFindAll(), (RowMapper<T>) getEntityRowMapper(domainType));
+		String sql = sql(domainType).getFindAll();
+		System.out.println(sql);
+		return operations.query(sql, (RowMapper<T>) getEntityRowMapper(domainType));
 	}
 
 	/*
