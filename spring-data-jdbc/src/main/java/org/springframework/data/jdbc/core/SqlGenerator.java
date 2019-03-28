@@ -328,6 +328,13 @@ class SqlGenerator {
 
 	private String createFindAllSql() {
 
+		Select select = createBaseSelect();
+
+		return SqlRenderer.create().render(select);
+	}
+
+	private Select createBaseSelect() {
+
 		Table table = SQL.table(entity.getTableName());
 
 		List<Expression> columnExpressions = new ArrayList<>();
@@ -349,14 +356,11 @@ class SqlGenerator {
 
 		SelectBuilder.SelectJoin baseSelect = selectBuilder.from(table);
 
-		// TODO reusing the Join class would be nice
 		for (Join join : joinTables) {
 			baseSelect = baseSelect.leftOuterJoin(join.joinTable).on(join.joinColumn).equals(join.parentId);
 		}
 
-		Select select = baseSelect.build();
-
-		return SqlRenderer.create().render(select);
+		return baseSelect.build();
 	}
 
 	List<Column> getColumn(PersistentPropertyPath<RelationalPersistentProperty> path) {
