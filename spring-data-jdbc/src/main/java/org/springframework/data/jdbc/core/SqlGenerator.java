@@ -40,7 +40,6 @@ import org.springframework.data.relational.core.sql.Aliased;
 import org.springframework.data.relational.core.sql.Column;
 import org.springframework.data.relational.core.sql.Expression;
 import org.springframework.data.relational.core.sql.SQL;
-import org.springframework.data.relational.core.sql.Select;
 import org.springframework.data.relational.core.sql.SelectBuilder;
 import org.springframework.data.relational.core.sql.StatementBuilder;
 import org.springframework.data.relational.core.sql.Table;
@@ -62,7 +61,7 @@ import org.springframework.util.StringUtils;
 class SqlGenerator {
 
 	private final RelationalPersistentEntity<?> entity;
-	private final RelationalMappingContext context;
+	private final RelationalMappingContext mappingContext;
 	private final List<String> columnNames = new ArrayList<>();
 	private final List<String> nonIdColumnNames = new ArrayList<>();
 	private final Set<String> readOnlyColumnNames = new HashSet<>();
@@ -81,13 +80,16 @@ class SqlGenerator {
 	private final SqlGeneratorSource sqlGeneratorSource;
 
 	private final Pattern parameterPattern = Pattern.compile("\\W");
+	private final SqlContext sqlContext;
 
-	SqlGenerator(RelationalMappingContext context, RelationalPersistentEntity<?> entity,
+	SqlGenerator(RelationalMappingContext mappingContext, RelationalPersistentEntity<?> entity,
 			SqlGeneratorSource sqlGeneratorSource) {
 
-		this.context = context;
+		this.mappingContext = mappingContext;
 		this.entity = entity;
 		this.sqlGeneratorSource = sqlGeneratorSource;
+		this.sqlContext = new SqlContext(entity);
+
 		initColumnNames(entity, "");
 	}
 
@@ -122,7 +124,7 @@ class SqlGenerator {
 
 		final String embeddedPrefix = property.getEmbeddedPrefix();
 
-		final RelationalPersistentEntity<?> embeddedEntity = context.getRequiredPersistentEntity(property.getColumnType());
+		final RelationalPersistentEntity<?> embeddedEntity = mappingContext.getRequiredPersistentEntity(property.getColumnType());
 
 		initColumnNames(embeddedEntity, prefix + embeddedPrefix);
 	}
@@ -203,9 +205,11 @@ class SqlGenerator {
 
 	private String createFindOneSelectSql() {
 
-		return createSelectBuilderOld() //
-				.where(wb -> wb.tableAlias(entity.getTableName()).column(entity.getIdColumn()).eq().variable("id")) //
-				.build();
+		SelectBuilder.SelectWhere baseSelect = createBaseSelect();
+
+		SelectBuilder.SelectWhereAndOr withCondition = baseSelect.where(sqlContext.getIdColumn().isEqualTo(SQL.bindMarker(":id")));
+
+		return SqlRenderer.create().render(withCondition.build());
 	}
 
 	private SelectBuilderOld createSelectBuilderOld() {
@@ -229,6 +233,7 @@ class SqlGenerator {
 			String tableAlias, RelationalPersistentEntity<?> rootEntity, SelectBuilderOld builder) {
 
 		for (RelationalPersistentProperty property : entity) {
+
 			if (!property.isEntity() //
 					|| property.isEmbedded() //
 					|| Collection.class.isAssignableFrom(property.getType()) //
@@ -237,7 +242,7 @@ class SqlGenerator {
 				continue;
 			}
 
-			final RelationalPersistentEntity<?> refEntity = context.getRequiredPersistentEntity(property.getActualType());
+			final RelationalPersistentEntity<?> refEntity = mappingContext.getRequiredPersistentEntity(property.getActualType());
 			final String joinAlias;
 
 			if (tableAlias.isEmpty()) {
@@ -283,7 +288,7 @@ class SqlGenerator {
 			}
 
 			final String embeddedPrefix = prefix + property.getEmbeddedPrefix();
-			final RelationalPersistentEntity<?> embeddedEntity = context
+			final RelationalPersistentEntity<?> embeddedEntity = mappingContext
 					.getRequiredPersistentEntity(property.getColumnType());
 
 			addColumnsForSimpleProperties(embeddedEntity, embeddedPrefix, tableAlias, rootEntity, builder);
@@ -327,19 +332,16 @@ class SqlGenerator {
 	}
 
 	private String createFindAllSql() {
-
-		Select select = createBaseSelect();
-
-		return SqlRenderer.create().render(select);
+		return SqlRenderer.create().render(createBaseSelect().build());
 	}
 
-	private Select createBaseSelect() {
+	private SelectBuilder.SelectWhere createBaseSelect() {
 
 		Table table = SQL.table(entity.getTableName());
 
 		List<Expression> columnExpressions = new ArrayList<>();
 		Set<Join> joinTables = new HashSet<>();
-		for (PersistentPropertyPath<RelationalPersistentProperty> path : context
+		for (PersistentPropertyPath<RelationalPersistentProperty> path : mappingContext
 				.findPersistentPropertyPaths(entity.getType(), p -> true)) {
 
 			System.out.println(path);
@@ -360,7 +362,7 @@ class SqlGenerator {
 			baseSelect = baseSelect.leftOuterJoin(join.joinTable).on(join.joinColumn).equals(join.parentId);
 		}
 
-		return baseSelect.build();
+		return (SelectBuilder.SelectWhere)baseSelect;
 	}
 
 	List<Column> getColumn(PersistentPropertyPath<RelationalPersistentProperty> path) {
@@ -374,7 +376,7 @@ class SqlGenerator {
 		Table currentTable;
 		String columnName;
 		if (leafProperty.isEntity()) {
-			RelationalPersistentEntity<?> entityType = context.getRequiredPersistentEntity(leafProperty.getActualType());
+			RelationalPersistentEntity<?> entityType = mappingContext.getRequiredPersistentEntity(leafProperty.getActualType());
 			if (entityType.hasIdProperty()) {
 				return Collections.emptyList();
 			}
@@ -450,7 +452,7 @@ class SqlGenerator {
 			return null;
 		}
 
-		Table currentTable = SQL.table(context.getRequiredPersistentEntity(leafProperty.getActualType()).getTableName())
+		Table currentTable = SQL.table(mappingContext.getRequiredPersistentEntity(leafProperty.getActualType()).getTableName())
 				.as(getAliasPrefix(path));
 
 		PersistentPropertyPath<RelationalPersistentProperty> idDefiningParentPath = getIdDefiningParentPath(path);
@@ -480,7 +482,7 @@ class SqlGenerator {
 		if (path.getLength() == 0) {
 			return root;
 		}
-		return context.getRequiredPersistentEntity(path.getRequiredLeafProperty().getActualType());
+		return mappingContext.getRequiredPersistentEntity(path.getRequiredLeafProperty().getActualType());
 	}
 
 	private PersistentPropertyPath<RelationalPersistentProperty> getIdDefiningParentPath(
@@ -575,7 +577,7 @@ class SqlGenerator {
 			return String.format("DELETE FROM %s", entity.getTableName());
 		}
 
-		RelationalPersistentEntity<?> entityToDelete = context
+		RelationalPersistentEntity<?> entityToDelete = mappingContext
 				.getRequiredPersistentEntity(path.getRequiredLeafProperty().getActualType());
 
 		final String innerMostCondition1 = createInnerMostCondition("%s IS NOT NULL", path);
@@ -590,7 +592,7 @@ class SqlGenerator {
 
 	String createDeleteByPath(PersistentPropertyPath<RelationalPersistentProperty> path) {
 
-		RelationalPersistentEntity<?> entityToDelete = context
+		RelationalPersistentEntity<?> entityToDelete = mappingContext
 				.getRequiredPersistentEntity(path.getRequiredLeafProperty().getActualType());
 
 		final String innerMostCondition = createInnerMostCondition("%s = :rootId", path);
@@ -643,7 +645,7 @@ class SqlGenerator {
 			rootPath = rootPath.getParentPath();
 		}
 
-		RelationalPersistentEntity<?> entity = context
+		RelationalPersistentEntity<?> entity = mappingContext
 				.getRequiredPersistentEntity(rootPath.getBaseProperty().getOwner().getTypeInformation());
 		RelationalPersistentProperty property = path.getRequiredLeafProperty();
 
