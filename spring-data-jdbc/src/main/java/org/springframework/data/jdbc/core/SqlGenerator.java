@@ -415,6 +415,13 @@ class SqlGenerator {
 		return getEmbeddedPrefix(parentPath, embeddedPrefix + prefix);
 	}
 
+	/**
+	 * returns the table with correct alias which contains the column for the given property path.
+	 *
+	 * @param path
+	 * @param table the table to be used for the empty path.
+	 * @return
+	 */
 	private Table getOwningTable(PersistentPropertyPath<RelationalPersistentProperty> path, Table table) {
 
 		if (path.getLength() > 1) {
